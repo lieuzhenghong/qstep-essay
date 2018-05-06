@@ -1,0 +1,479 @@
+---
+title: "Appendix: code notebook"
+#output: html_notebook
+output: pdf_document
+---
+
+Lijphart finds that consensus democracy (on the executive-parties dimension) decreases social inequality. Here are the dependent variables:
+
+1. Gini coefficient;
+2. 10/10 ratio;
+3. 20/20 ratio;
+4. Percentage of women in government;
+5. UN Violence against Women statistic.
+
+In this notebook, I aim to do two things:
+
+1. Replicate Lijphart's results using panel data to remove fixed effects that confound the results;
+2. Extend Lijphart's research to 67 rather than his original 36 democracies, to see if his results continue to hold.
+
+```{r}
+#install.packages(c("psych", "zoo", "plm", "stargazer"))
+library("psych")
+library("zoo")
+library("plm")
+library("stargazer")
+```
+
+```{r}
+# Import QoG dataset
+qog <- read.csv("./qog.csv") #extremely large
+data <- read.csv("http://andy.egge.rs/data/L.csv")
+```
+
+Import the Polity IV dataset and take countries that have i) a Democracy score of 6 or more and ii) have been consistently democratic for at least 20 years (1997-2016).
+
+```{r}
+# Import Polity IV dataset
+polity_iv <- read.csv("./polity_iv_2016.csv")
+polity_iv <- polity_iv[, c("scode", "country", "year", "flag", "democ", "autoc", "polity2")]
+# These are countries that have been undemocratic at any time since 1996 (Democracy score of <6)
+
+not_democratic = subset(polity_iv, (year>1996 & democ <6))
+
+# The democracies that pass our criteria (current less not democratic)
+
+polity_iv_democracies <- subset(polity_iv, !(is.element(country, not_democratic$country)) & year>1996)
+
+# Remove outliers (too young: East Timor, Kosovo, Macedonia, Serbia and Montenegro)
+polity_iv_democracies <- subset(polity_iv_democracies, !(is.element(country, "East Timor") | 
+                                                 is.element(country,"Kosovo") |
+                                                 is.element(country, "Serbia") |
+                                                 is.element(country, "Montenegro") |
+                                                 is.element(country, "Serbia and Montenegro") |
+                                                 is.element(country, "Timor Leste")
+                                               ))
+# I was debating whether to use Polity score >= 6 or democracy score >= 6. It turns out that
+# only Suriname and Albania have a democracy score of 6 with a Polity score of 5 and so
+# this doesn't affect the results much 
+#polity_iv_democracies$country[polity_iv_democracies$polity2<6];
+
+#Cleanup
+polity_iv_democracies$country <- factor(polity_iv_democracies$country)
+polity_iv_democracies$scode <- factor(polity_iv_democracies$scode)
+
+# Total of 65 countries that fulfill the criteria of at least 20 consecutive
+# years of democracy after 1996
+polity_iv_democracies_2016 <- subset(polity_iv_democracies, year==2016)
+polity_iv_democracies_2016
+```
+
+```{r}
+# Here we operationalise both the independent and dependent variables
+eff_num_parl_parties = "gol_enep"
+minimal_winning_one_party_cabinet = "dpi_gf"
+executive_dominance_index = NULL
+disproportionality_vars = c(
+"dpi_gps1",
+"dpi_gps2",
+"dpi_gps3",
+"dpi_gpvs1",
+"dpi_gpvs2",
+"dpi_gpvs3",
+"dpi_gs",
+"dpi_ogpvs",
+"dpi_nogps",
+"dpi_slop1",
+"dpi_slop2",
+"dpi_slop3",
+"dpi_vslop1",
+"dpi_vslop2",
+"dpi_vslop3",
+"dpi_vsoop",
+"dpi_noops",
+"dpi_vsul",
+"dpi_numul",
+"dpi_seats"
+)
+interest_group_pluralism_index = NULL
+
+controls = c("undp_hdi", "unna_pop")
+econ_inequality_vars = c(
+"wdi_gini",
+"lis_gini",
+"wdi_incsh10h",
+"wdi_incsh10l",
+"wdi_incsh20h",
+"wdi_incsh20l"
+)
+social_inequality_vars = c(
+"wdi_lifexp",
+"wdi_lifexpf",
+"wdi_lifexpm",
+"bl_asy15f",
+"bl_asy15m",
+"bl_asy15mf",
+"bl_lh_15f",
+"bl_lh_15m",
+"bl_lh_15mf",
+"vdem_gender",
+"ipu_l_s",
+"ipu_l_w",
+"ipu_u_s",
+"ipu_u_w"
+)
+qog_reduced <- qog[, c(
+"ccode",
+"cname",
+"year",
+econ_inequality_vars,
+controls,
+eff_num_parl_parties,
+social_inequality_vars,
+disproportionality_vars,
+minimal_winning_one_party_cabinet
+)]
+
+colnames(qog_reduced)[colnames(qog_reduced) == "gol_enep"] <- "enep"
+
+# Interpolate columns
+qog_reduced$bl_asy15f <-
+na.approx(qog_reduced$bl_asy15f, na.rm = FALSE)
+qog_reduced$bl_asy15m <-
+na.approx(qog_reduced$bl_asy15m, na.rm = FALSE)
+qog_reduced$bl_asy15mf <-
+na.approx(qog_reduced$bl_asy15mf, na.rm = FALSE)
+qog_reduced$bl_lh_15f <-
+na.approx(qog_reduced$bl_lh_15f, na.rm = FALSE)
+qog_reduced$bl_lh_15m <-
+na.approx(qog_reduced$bl_lh_15m, na.rm = FALSE)
+qog_reduced$bl_lh_15mf <-
+na.approx(qog_reduced$bl_lh_15mf, na.rm = FALSE)
+```
+
+```{r}
+# =====
+# Here I clean up the data: I rename countries so that they are consistent in
+# both datasets and finally merge both datasets together
+# =====
+
+colnames(qog_reduced)[colnames(qog_reduced)=="cname"] <- "country"
+
+#Rename Cyprus, France, South Korea and Slovak Republic
+levels(qog_reduced$country)[46] <- "Cyprus"
+levels(qog_reduced$country)[64] <- "France"
+levels(qog_reduced$country)[96] <- "Korea South"
+levels(qog_reduced$country)[162] <- "Slovak Republic"
+qog_democracies <-
+  subset(qog_reduced, (
+  is.element(country, polity_iv_democracies_2016$country) &
+  year > 1996 & year <= 2016
+  ))
+
+# Cleanup
+qog_democracies$country <- factor(qog_democracies$country)
+qog_democracies_2016 <- subset(qog_democracies, year==2016)
+
+# Sanity check
+stopifnot(levels(polity_iv_democracies$country) == levels(qog_democracies$country))
+
+# Merge the two data sets together
+democracies <- merge(qog_democracies, polity_iv_democracies, by=c("country", "year"))
+
+democracies$dpi_ogpvs[is.na(democracies$dpi_ogpvs)] <- 0 #vote share of other government parties
+democracies$dpi_gpvs3 <-na.locf(democracies$dpi_gpvs3)
+democracies$dpi_vslop3 <-na.locf(democracies$dpi_vslop3)
+democracies$dpi_vsoop <-na.locf(democracies$dpi_vsoop)
+```
+
+After merging and cleaning the dataset, I can finally start operationalising my dependent variables.
+I calculate Gallagher's index of disproportionality.
+
+```{r}
+# Calculate Gallagher's index
+democracies$disproportionality <- sqrt(0.5 * (
+  (democracies$dpi_gpvs1 - democracies$dpi_gps1/democracies$dpi_seats)^2   +
+  (democracies$dpi_gpvs2 - democracies$dpi_gps2/democracies$dpi_seats)^2   +
+  (democracies$dpi_gpvs3 - democracies$dpi_gps3/democracies$dpi_seats)^2   +
+  (democracies$dpi_ogpvs - democracies$dpi_nogps/democracies$dpi_seats)^2  +
+  (democracies$dpi_vslop1 - democracies$dpi_slop1/democracies$dpi_seats)^2 +
+  (democracies$dpi_vslop2 - democracies$dpi_slop2/democracies$dpi_seats)^2 +
+  (democracies$dpi_vslop3 - democracies$dpi_slop3/democracies$dpi_seats)^2 +
+  (democracies$dpi_vsoop - democracies$dpi_noops/democracies$dpi_seats)^2 +
+  (democracies$dpi_vsul - democracies$dpi_numul/democracies$dpi_seats)^2
+  ))
+```
+
+```{r}
+# Create the 10/10 and 20/20 ratio
+democracies$s10 <- democracies$wdi_incsh10h / democracies$wdi_incsh10l
+democracies$s20 <- democracies$wdi_incsh20h / democracies$wdi_incsh20l
+```
+
+```{r}
+# Create the percentage of women in upper and lower house
+democracies$lw <- democracies$ipu_l_w / democracies$ipu_l_s
+democracies$uw <- democracies$ipu_u_w / democracies$ipu_u_s
+```
+
+```{r}
+# Calculate Cronbach's alpha for my exec-parties index
+
+exec_parties <- democracies[c("dpi_gf", "enep", "disproportionality")]
+
+# Reverse the direction of disproportionality as the
+# more disproportinate, the more majoritarian
+summary(alpha(scale(exec_parties), keys=c("disproportionality")))
+
+# My panel data version of Lijphart's executive-parties dimension is highly
+# internally consistent with a Cronbach's alpha of 0.85
+```
+
+I now run a panel-data regression with my executive-parties dimension (disproportionality, dpi_gf and dpi_enep) as the independent variable and Gini coefficient (wdi_gini) as the dependent variable, controlling for HDI and population size (undp_hdi, unna_pop).
+
+```{r}
+# Clean data by scaling everything
+d2 <- democracies
+
+d2$wdi_gini <-ifelse(!is.na(d2$wdi_gini), d2$wdi_gini, d2$lis_gini * 100)
+d2$undp_hdi <- scale(d2$undp_hdi)
+d2$log_unna_pop <- scale(log(d2$unna_pop))
+
+panel <- pdata.frame(d2)
+```
+
+```{r}
+# Use principal components analysis to reduce to one executive-parties dimension.
+
+# Use a scree plot to see how many factors we need
+
+screeplot(princomp(!is.na(exec_parties)))
+
+scree(!is.na(exec_parties))
+
+# The variation explained drops dramatically after 1 component; 1 component is enough.
+ep <- principal(exec_parties, nfactors = 1, rotate="none", scores = T)
+ep
+
+#ep$scores
+panel$ep <- ep$scores
+```
+
+```{r}
+# Create Lijphart's 36 democracies
+panel_lijphart <- subset(panel, ccode == 32 | ccode == 36 | ccode == 40 | 
+ccode == 56 | ccode == 124 | ccode == 188 | ccode == 208 | ccode == 246 | 
+ccode == 250 | ccode == 276 | ccode == 300 | ccode == 356 | ccode == 372 | 
+ccode == 376 | ccode == 380 | ccode == 388 | ccode == 392 | ccode == 410 | 
+ccode == 480 | ccode == 528 | ccode == 554 | ccode == 578 | ccode == 620 | 
+ccode == 724 | ccode == 752 | ccode == 756 | ccode == 780 | ccode == 826 | 
+ccode == 840 | ccode == 858)
+```
+
+```{r}
+# Test the hypothesis that Lijphart's countries are more gender equal than my countries
+panel_non_lijphart <- subset(panel, !(ccode %in% panel_lijphart$ccode))
+t.test((panel_lijphart$vdem_gender), (panel_non_lijphart$vdem_gender))
+```
+
+```{r}
+# Remove Argentina as a inflation outlier
+panel_lijphart <- subset(panel_lijphart, ccode!=32)
+
+# Baseline panel regressions without any fixed effect controlling
+gini_lijphart_bl <-
+  lm(
+  panel_lijphart$wdi_gini ~ panel_lijphart$ep + panel_lijphart$undp_hdi + panel_lijphart$log_unna_pop
+  )
+  s10_lijphart_bl <-
+  lm(
+  panel_lijphart$s10 ~ panel_lijphart$ep + panel_lijphart$undp_hdi + panel_lijphart$log_unna_pop
+  )
+  s20_lijphart_bl <-
+  lm(
+  panel_lijphart$s20 ~ panel_lijphart$ep + panel_lijphart$undp_hdi + panel_lijphart$log_unna_pop
+  )
+  lw_lijphart_bl <-
+  lm(
+  panel_lijphart$lw ~ panel_lijphart$ep + panel_lijphart$undp_hdi + panel_lijphart$log_unna_pop
+  )
+  uw_lijphart_bl <-
+  lm(
+  panel_lijphart$uw ~ panel_lijphart$ep + panel_lijphart$undp_hdi + panel_lijphart$log_unna_pop
+  )
+  se_lijphart_bl <-
+  lm(
+  panel_lijphart$vdem_gender ~ panel_lijphart$ep + panel_lijphart$undp_hdi + panel_lijphart$log_unna_pop
+  )
+  
+  
+  gini_lijphart <-
+  plm(
+  panel_lijphart$wdi_gini ~ panel_lijphart$ep + panel_lijphart$undp_hdi + panel_lijphart$log_unna_pop,
+  panel_lijphart,
+  effect = "twoways",
+  method = "within"
+  )
+  s10_lijphart   <-
+  plm(
+  panel_lijphart$s10 ~ panel_lijphart$ep + panel_lijphart$undp_hdi + panel_lijphart$log_unna_pop,
+  panel_lijphart,
+  effect = "twoways",
+  method = "within"
+  )
+  s20_lijphart   <-
+  plm(
+  panel_lijphart$s20 ~ panel_lijphart$ep + panel_lijphart$undp_hdi + panel_lijphart$log_unna_pop,
+  panel_lijphart,
+  effect = "twoways",
+  method = "within"
+  )
+  lw_lijphart    <-
+  plm(
+  panel_lijphart$lw ~ panel_lijphart$ep + panel_lijphart$undp_hdi + panel_lijphart$log_unna_pop,
+  panel_lijphart,
+  effect = "twoways",
+  method = "within"
+  )
+  uw_lijphart    <-
+  plm(
+  panel_lijphart$uw ~ panel_lijphart$ep + panel_lijphart$undp_hdi + panel_lijphart$log_unna_pop,
+  panel_lijphart,
+  effect = "twoways",
+  method = "within"
+  )
+  se_lijphart    <-
+  plm(
+  panel_lijphart$vdem_gender ~ panel_lijphart$ep + panel_lijphart$undp_hdi + panel_lijphart$log_unna_pop,
+  panel_lijphart,
+  effect = "twoways",
+  method = "within"
+  )
+
+
+  # stargazer(
+  #   gini_lijphart_bl,
+  #   s10_lijphart_bl,
+  #   s20_lijphart_bl,
+  #   #report="vc*p",
+  #   title = "Baseline panel regression for Lijphart's 36 countries: Economic inequality",
+  #   dep.var.labels = c("Gini", "10/10 ratio", "20/20 ratio"),
+  #   covariate.labels = c("Executive-parties", "HDI", "Population, logged"),
+  #   type = "latex"
+  #   )
+  #   stargazer(
+  #   lw_lijphart_bl,
+  #   uw_lijphart_bl,
+  #   #report="vc*p",
+  #   title = "Baseline panel regression for Lijphart's 36 countries: Gender inequality",
+  #   dep.var.labels = c("Women in lower house", "Women in upper house", "Gender inequality"),
+  #   covariate.labels = c("Executive-parties", "HDI", "Population, logged"),
+  #   type = "latex"
+  #   )
+  #   stargazer(
+  #   lw_lijphart,
+  #   uw_lijphart,
+  #   #report="vc*p",
+  #   title = "Fixed effect panel regression for Lijphart's 36 countries: Gender inequality",
+  #   dep.var.labels = c("Women in lower house", "Women in upper house", "Gender inequality"),
+  #   covariate.labels = c("Executive-parties", "HDI", "Population, logged"),
+  #   type = "latex"
+  #   )
+  #   
+  #   stargazer(
+  #   gini_lijphart,
+  #   s10_lijphart,
+  #   s20_lijphart,
+  #   title = "Fixed effect panel regression for Lijphart's 36 countries: Economic inequality",
+  #   dep.var.labels = c("Gini", "10/10 ratio", "20/20 ratio"),
+  #   covariate.labels = c("Executive-parties", "HDI", "Population, logged"),
+  #   type = "text"
+  #   )
+
+
+```
+
+```{r}
+
+gini  <-
+  plm(
+  panel$wdi_gini ~ panel$ep + panel$undp_hdi + panel$log_unna_pop,
+  panel,
+  effect = "twoways",
+  method = "within"
+  )
+  s10   <-
+  plm(
+  panel$s10 ~ panel$ep + panel$undp_hdi + panel$log_unna_pop,
+  panel,
+  effect = "twoways",
+  method = "within"
+  )
+  s20   <-
+  plm(
+  panel$s20 ~ panel$ep + panel$undp_hdi + panel$log_unna_pop,
+  panel,
+  effect = "twoways",
+  method = "within"
+  )
+  
+  
+  lw    <-
+  plm(
+  panel$lw ~ panel$ep + panel$undp_hdi + panel$log_unna_pop
+  ,
+  panel,
+  effect = "twoways",
+  method = "within"
+  )
+  uw    <-
+  plm(
+  panel$uw ~ panel$ep + panel$undp_hdi + panel$log_unna_pop,
+  panel,
+  effect = "twoways",
+  method = "within"
+  )
+  se    <-
+  plm(
+  panel$vdem_gender ~ panel$ep + panel$undp_hdi + panel$log_unna_pop,
+  panel,
+  effect = "twoways",
+  method = "within"
+  )
+  
+  baseline_lw <-
+  lm(panel$lw ~ panel$ep + panel$undp_hdi + panel$log_unna_pop)
+  baseline_uw <-
+  lm(panel$uw ~ panel$ep + panel$undp_hdi + panel$log_unna_pop)
+  baseline_se <-
+  lm(panel$vdem_gender ~ panel$ep + panel$undp_hdi + panel$log_unna_pop)
+  
+  # stargazer(
+  #   gini,
+  #   s10,
+  #   s20,
+  #   title = "Fixed effect panel regression for extended 63 countries: Economic inequality",
+  #   dep.var.labels = c("Gini", "10/10 ratio", "20/20 ratio"),
+  #   covariate.labels = c("Executive-parties", "HDI", "Population, logged"),
+  #   type = "text"
+  #   )
+  #   
+  #   stargazer(
+  #   baseline_lw,
+  #   baseline_uw,
+  #   type = "latex",
+  #   title = "Baseline panel regression for extended 63 countries: Gender inequality",
+  #   dep.var.labels = c("Women in lower house", "Women in upper house", "Gender inequality"),
+  #   covariate.labels = c("Executive-parties", "HDI", "Population, logged")
+  #   )
+  #   
+  #   stargazer(
+  #   lw,
+  #   uw,
+  #   se,
+  #   type = "text",
+  #   title = "Fixed effect panel regression for extended 63 countries: Gender inequality",
+  #   dep.var.labels = c("Women in lower house", "Women in upper house", "Gender inequality"),
+  #   covariate.labels = c("Executive-parties", "HDI", "Population, logged")
+  #   )
+```
