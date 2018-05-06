@@ -9,9 +9,9 @@ essay is
 answer to one of the three questions listed below that deal with Lijphart’s regime type
 classification and its consequences:
 
-> 1. Does consensus democracy reduce social inequality?
-  2. Does consensus democracy improve economic outcomes?
-  3. Does consensus democracy improve the quality of government?
+>  1. Does consensus democracy reduce social inequality?
+>  2. Does consensus democracy improve economic outcomes?
+>  3. Does consensus democracy improve the quality of government?
 
 I chose the first question, "Does consensus democracy reduce social inequality?"
 I used an R notebook to do my scratch work and preliminary data exploration,
