@@ -26,7 +26,18 @@ couldn't find a way to fix that.
 Lastly, I stapled the two PDFs together into the [final
 essay](/qstep_essay_final.pdf).
 
+This essay won the 2018 prize. I was happy that Professor Andrew Eggers and
+Professor David Kirk were pleased with my work.
+
+> 'This outstanding essay offered an excellent overview of the literature and
+showed impressive ambition and skill in extending Lijphart's dataset and
+analysis. Most importantly, it demonstrated a mature capacity to critique and
+build on existing literature theoretically and methodologically.
+
+![prize_announcement](/img/prize_announcement.JPG)
+
 # Things to take note
+
 I commented out the first line `install-packages` but you may have to uncomment
 it to install the requisite packages.
 
